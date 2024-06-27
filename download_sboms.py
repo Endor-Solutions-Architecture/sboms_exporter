@@ -3,6 +3,7 @@ import json
 from dotenv import load_dotenv
 import os
 import re
+import argparse
 
 # Load the environment variables from the .env file
 load_dotenv()
@@ -20,10 +21,11 @@ def get_token():
         "secret": api_secret
     }
     headers = {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Request-Timeout": "60"
     }
 
-    response = requests.post(url, json=payload, headers=headers)
+    response = requests.post(url, json=payload, headers=headers, timeout=60)
     
     if response.status_code == 200:
         token = response.json().get('token')
@@ -35,35 +37,51 @@ API_TOKEN = get_token()
 HEADERS = {
     "User-Agent": "curl/7.68.0",
     "Accept": "*/*",
-    "Authorization": f"Bearer {API_TOKEN}"
+    "Authorization": f"Bearer {API_TOKEN}",
+    "Request-Timeout": "60"  # Set the request timeout to 60 seconds
 }
 
 def sanitize_filename(filename):
     # Remove any character that is not a letter, number, underscore, or hyphen
     return re.sub(r'[^\w\-_\.]', '_', filename)
 
-def get_projects():
+def get_projects(tags=None):
+    print("Fetching projects...")
     url = f"{API_URL}/namespaces/{ENDOR_NAMESPACE}/projects"
+    
+    params = {}
+    if tags:
+        tags_filter = " or ".join([f'meta.tags=="{tag}"' for tag in tags])
+        params['list_parameters.filter'] = tags_filter
+    
     # Make the request to get all projects
-    response = requests.get(url, headers=HEADERS, timeout=10)
+    response = requests.get(url, headers=HEADERS, params=params, timeout=60)
 
     if response.status_code != 200:
         print(f"Failed to get projects, Status Code: {response.status_code}, Response: {response.text}")
         exit()
 
+    
     projects = response.json().get('list', {}).get('objects', [])
+    print(f"Total projects fetched: {len(projects)}")
 
     # Extract project UUIDs
     project_uuids = [project['uuid'] for project in projects]
+    print(f"Project UUIDs: {project_uuids}")
     return project_uuids
 
 def get_package_uuids_and_names(project_uuid):
     url_package_versions = f'{API_URL}/namespaces/{ENDOR_NAMESPACE}/package-versions'
     params = {
-        'list_parameters.filter': f'spec.project_uuid=={project_uuid}'
+        'list_parameters.filter': f'spec.project_uuid=={project_uuid} and context.type==CONTEXT_TYPE_MAIN'
     }
-    response = requests.get(url_package_versions, headers=HEADERS, params=params, timeout=10)
+    response = requests.get(url_package_versions, headers=HEADERS, params=params, timeout=60)
+    if response.status_code != 200:
+        print(f"Failed to get package versions for project {project_uuid}, Status Code: {response.status_code}, Response: {response.text}")
+        return []
+    
     package_versions = response.json().get('list', {}).get('objects', [])
+
     return [(package['uuid'], package['meta']['name']) for package in package_versions]
 
 def create_sbom(package_uuid, package_name, success_counter, failure_counter):
@@ -81,7 +99,7 @@ def create_sbom(package_uuid, package_name, success_counter, failure_counter):
         }
     }
     try:
-        response = requests.post(url_export_sbom, headers=HEADERS, data=json.dumps(payload), timeout=30)
+        response = requests.post(url_export_sbom, headers=HEADERS, data=json.dumps(payload), timeout=60)
         if response.status_code == 200:
             sbom_data = response.json()
             # Sanitize the package name for use as a filename
@@ -103,7 +121,19 @@ def create_sbom(package_uuid, package_name, success_counter, failure_counter):
     return success_counter, failure_counter
 
 def main():
-    project_uuids = get_projects()
+    parser = argparse.ArgumentParser(description="SBOM Exporter")
+    parser.add_argument('--project_tags', type=str, help="Comma-separated list of project tags to filter by")
+    args = parser.parse_args()
+
+    tags = args.project_tags.split(',') if args.project_tags else None
+    if tags:
+        tags = [tag.strip() for tag in tags]
+
+    project_uuids = get_projects(tags)
+    if not project_uuids:
+        print("No projects found with the specified tags.")
+        return
+
     total_sboms = 0
     success_counter = 0
     failure_counter = 0
@@ -118,4 +148,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    
