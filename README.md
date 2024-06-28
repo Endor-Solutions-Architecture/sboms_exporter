@@ -10,6 +10,18 @@ Step 2: run
 python3 -m venv venv  
 source venv/bin/activate  
 pip install -r requirements.txt  
-python3 download_sboms.py
 ```
+
+Step 3:
+If you want to download all packages from all projects execute:
+```
+python3 download_sboms.py 
+```
+or 
+
+If you want to download only packages from projects with specific tags:
+```
+python3 download_sboms.py --project_tags="project_tag1, project_tag2"
+```
+
 
