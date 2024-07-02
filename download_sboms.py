@@ -47,42 +47,68 @@ def sanitize_filename(filename):
 
 def get_projects(tags=None):
     print("Fetching projects...")
+   
     url = f"{API_URL}/namespaces/{ENDOR_NAMESPACE}/projects"
     
-    params = {}
+    params = {'list_parameters.mask': 'uuid'}
     if tags:
         tags_filter = " or ".join([f'meta.tags=="{tag}"' for tag in tags])
         params['list_parameters.filter'] = tags_filter
     
-    # Make the request to get all projects
-    response = requests.get(url, headers=HEADERS, params=params, timeout=60)
+    project_uuids = []
+    next_page_id = None
 
-    if response.status_code != 200:
-        print(f"Failed to get projects, Status Code: {response.status_code}, Response: {response.text}")
-        exit()
+    while True:
+        if next_page_id:
+            params['list_parameters.page_id'] = next_page_id
 
-    
-    projects = response.json().get('list', {}).get('objects', [])
-    print(f"Total projects fetched: {len(projects)}")
+        response = requests.get(url, headers=HEADERS, params=params, timeout=60)
 
-    # Extract project UUIDs
-    project_uuids = [project['uuid'] for project in projects]
+        if response.status_code != 200:
+            print(f"Failed to get projects, Status Code: {response.status_code}, Response: {response.text}")
+            exit()
+
+        response_data = response.json()
+        projects = response_data.get('list', {}).get('objects', [])
+        project_uuids.extend([project['uuid'] for project in projects])
+
+        next_page_id = response_data.get('list', {}).get('response', {}).get('next_page_id')
+        if not next_page_id:
+            break
+
+    print(f"Total projects fetched: {len(project_uuids)}")
     print(f"Project UUIDs: {project_uuids}")
     return project_uuids
 
 def get_package_uuids_and_names(project_uuid):
+    print(f"Fetching packages for project {project_uuid}...")
     url_package_versions = f'{API_URL}/namespaces/{ENDOR_NAMESPACE}/package-versions'
     params = {
-        'list_parameters.filter': f'spec.project_uuid=={project_uuid} and context.type==CONTEXT_TYPE_MAIN'
+        'list_parameters.filter': f'spec.project_uuid=={project_uuid} and context.type==CONTEXT_TYPE_MAIN',
+        'list_parameters.mask': 'uuid,meta.name'
     }
-    response = requests.get(url_package_versions, headers=HEADERS, params=params, timeout=60)
-    if response.status_code != 200:
-        print(f"Failed to get package versions for project {project_uuid}, Status Code: {response.status_code}, Response: {response.text}")
-        return []
-    
-    package_versions = response.json().get('list', {}).get('objects', [])
+    packages = []
+    next_page_id = None
 
-    return [(package['uuid'], package['meta']['name']) for package in package_versions]
+    while True:
+        if next_page_id:
+            params['list_parameters.page_id'] = next_page_id
+
+        response = requests.get(url_package_versions, headers=HEADERS, params=params, timeout=60)
+        if response.status_code != 200:
+            print(f"Failed to get package versions for project {project_uuid}, Status Code: {response.status_code}, Response: {response.text}")
+            break
+
+        response_data = response.json()
+        package_versions = response_data.get('list', {}).get('objects', [])
+        packages.extend([(package['uuid'], package['meta']['name']) for package in package_versions])
+
+        next_page_id = response_data.get('list', {}).get('response', {}).get('next_page_id')
+        if not next_page_id:
+            break
+
+    print(f"Total packages fetched for project {project_uuid}: {len(packages)}")
+    return packages
 
 def create_sbom(package_uuid, package_name, success_counter, failure_counter):
     url_export_sbom = f'{API_URL}/namespaces/{ENDOR_NAMESPACE}/sbom-export'
